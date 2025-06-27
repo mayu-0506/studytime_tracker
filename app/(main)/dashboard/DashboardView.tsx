@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useDashboardTotals } from '@/utils/useDashboardTotals'
 import { AlertDestructive } from '@/components/ui/alert-destructive'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -8,10 +8,14 @@ import { Button } from '@/components/ui/button'
 import SubjectPieChart from '@/components/charts/SubjectPieChart'
 import DashboardBarChart from '@/components/charts/DashboardBarChart'
 import StudyCalendarHeatmap from '@/components/charts/StudyCalendarHeatmap'
+import DayDetailModal from '@/components/modals/DayDetailModal'
 import { Clock, TrendingUp, Calendar, BarChart3, PieChart, ChevronLeft, ChevronRight } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, addMonths, subMonths } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { DashboardInitialData } from '@/types/dashboard'
+import { getMonthlyCalendar, getSubjectBreakdown, CalendarDay } from '@/actions/dashboard-stats'
+import { formatMinutesToHoursMinutes } from '@/utils/time-format'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 export default function DashboardView({
   initialData
@@ -19,16 +23,53 @@ export default function DashboardView({
   initialData: DashboardInitialData
 }) {
   const [currentMonth, setCurrentMonth] = useState(new Date())
+  const [calendarData, setCalendarData] = useState<CalendarDay[]>([])
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
+  const [subjectPeriod, setSubjectPeriod] = useState<'all' | 'last_7_days' | 'last_4_weeks'>('all')
+  const [subjectBreakdownData, setSubjectBreakdownData] = useState(initialData.subjectBreakdown)
+  const [subjectLoading, setSubjectLoading] = useState(false)
   
   /* ❶ 初期データのみ使用（クライアントSWRは一時的に無効化） */
   const totals = initialData.totals
-  const subjectBreakdown = initialData.subjectBreakdown
+  const subjectBreakdown = subjectBreakdownData
   const dayBuckets = initialData.dayBuckets
   const weekBuckets = initialData.weekBuckets
-  const calendarData: any[] = []  // 一時的に空配列
   
   /* ❷ エラーチェック */
   const error = initialData.error
+  
+  // 現在の月のカレンダーデータを取得
+  useEffect(() => {
+    const fetchCalendarData = async () => {
+      setCalendarLoading(true)
+      const firstDay = startOfMonth(currentMonth)
+      const lastDay = endOfMonth(currentMonth)
+      const result = await getMonthlyCalendar(firstDay, lastDay)
+      if (!result.error) {
+        setCalendarData(result.data)
+      }
+      setCalendarLoading(false)
+    }
+    fetchCalendarData()
+  }, [currentMonth])
+  
+  // 科目別データを期間に応じて再取得
+  useEffect(() => {
+    const fetchSubjectData = async () => {
+      setSubjectLoading(true)
+      try {
+        const data = await getSubjectBreakdown(subjectPeriod)
+        setSubjectBreakdownData(data)
+      } catch (error) {
+        console.error('Failed to fetch subject breakdown:', error)
+      } finally {
+        setSubjectLoading(false)
+      }
+    }
+    fetchSubjectData()
+  }, [subjectPeriod])
   
   if (error) {
     return (
@@ -48,18 +89,17 @@ export default function DashboardView({
     )
   }
   
-  // データ準備
-  const displayTotals = totals || { total_min: 0, last7_min: 0, last4w_min: 0 }
+  // データ準備（フォールバック処理を含む）
+  const displayTotals = totals ? {
+    total_min: totals.total_min || 0,
+    current_week_min: totals.current_week_min !== undefined ? totals.current_week_min : 0,
+    current_month_min: totals.current_month_min !== undefined ? totals.current_month_min : 0
+  } : { total_min: 0, current_week_min: 0, current_month_min: 0 }
+  
   const displaySubjectBreakdown = subjectBreakdown || []
   const displayDayBuckets = dayBuckets || []
   const displayWeekBuckets = weekBuckets || []
-  const displayCalendarData = calendarData || []
   
-  const formatHours = (minutes: number) => {
-    const hours = Math.floor(minutes / 60)
-    const mins = minutes % 60
-    return `${hours}時間${mins}分`
-  }
   
   const handlePreviousMonth = () => {
     setCurrentMonth(prev => subMonths(prev, 1))
@@ -67,6 +107,11 @@ export default function DashboardView({
   
   const handleNextMonth = () => {
     setCurrentMonth(prev => addMonths(prev, 1))
+  }
+  
+  const handleDateClick = (date: Date) => {
+    setSelectedDate(date)
+    setIsDetailModalOpen(true)
   }
   
   return (
@@ -82,7 +127,7 @@ export default function DashboardView({
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatHours(displayTotals.total_min)}
+              {formatMinutesToHoursMinutes(displayTotals.total_min)}
             </div>
             <p className="text-xs text-muted-foreground">
               全期間の累計
@@ -92,30 +137,30 @@ export default function DashboardView({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">直近7日間</CardTitle>
+            <CardTitle className="text-sm font-medium">今週の勉強時間</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatHours(displayTotals.last7_min)}
+              {formatMinutesToHoursMinutes(displayTotals.current_week_min)}
             </div>
             <p className="text-xs text-muted-foreground">
-              過去1週間の学習時間
+              月曜日からの累計
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">直近4週間</CardTitle>
+            <CardTitle className="text-sm font-medium">今月の勉強時間</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatHours(displayTotals.last4w_min)}
+              {formatMinutesToHoursMinutes(displayTotals.current_month_min)}
             </div>
             <p className="text-xs text-muted-foreground">
-              過去4週間の学習時間
+              {format(new Date(), 'M月', { locale: ja })}の累計
             </p>
           </CardContent>
         </Card>
@@ -126,13 +171,31 @@ export default function DashboardView({
         {/* 科目別円グラフ */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <PieChart className="h-5 w-5" />
-              科目別学習時間
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <PieChart className="h-5 w-5" />
+                科目別学習時間
+              </CardTitle>
+              <Select value={subjectPeriod} onValueChange={(value: 'all' | 'last_7_days' | 'last_4_weeks') => setSubjectPeriod(value)}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全期間</SelectItem>
+                  <SelectItem value="last_4_weeks">直近4週間</SelectItem>
+                  <SelectItem value="last_7_days">直近7日間</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent>
-            <SubjectPieChart data={displaySubjectBreakdown} />
+            {subjectLoading ? (
+              <div className="flex items-center justify-center h-64">
+                <p className="text-gray-500">読み込み中...</p>
+              </div>
+            ) : (
+              <SubjectPieChart data={displaySubjectBreakdown} />
+            )}
           </CardContent>
         </Card>
 
@@ -209,12 +272,26 @@ export default function DashboardView({
           </div>
         </CardHeader>
         <CardContent>
-          <StudyCalendarHeatmap 
-            data={displayCalendarData} 
-            month={currentMonth}
-          />
+          {calendarLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <p className="text-gray-500">読み込み中...</p>
+            </div>
+          ) : (
+            <StudyCalendarHeatmap 
+              data={calendarData} 
+              month={currentMonth}
+              onDateClick={handleDateClick}
+            />
+          )}
         </CardContent>
       </Card>
+      
+      {/* 日付詳細モーダル */}
+      <DayDetailModal
+        isOpen={isDetailModalOpen}
+        onClose={() => setIsDetailModalOpen(false)}
+        date={selectedDate}
+      />
     </div>
   )
 }

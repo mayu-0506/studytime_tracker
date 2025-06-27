@@ -56,7 +56,7 @@ export default async function DashboardPage() {
     // RPC関数を使ってデータを取得
     const [totalsResult, subjectBreakdown, dayBuckets, weekBuckets] = await Promise.all([
       getDashboardTotals(),
-      getSubjectBreakdown(),
+      getSubjectBreakdown('all'), // デフォルトは全期間
       getLast7DayBuckets(),
       getLast4WeekBuckets()
     ])

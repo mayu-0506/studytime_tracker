@@ -1,7 +1,7 @@
 export interface DashboardTotals {
   total_min: number
-  last7_min: number
-  last4w_min: number
+  current_week_min: number
+  current_month_min: number
 }
 
 // Database RPCから返される実際の型に合わせる

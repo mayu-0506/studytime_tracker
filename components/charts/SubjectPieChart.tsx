@@ -34,7 +34,9 @@ const COLORS = [
 
 export default function SubjectPieChart({ data }: SubjectPieChartProps) {
   const chartData = useMemo(() => {
-    const sortedData = [...data].sort((a, b) => b.total_min - a.total_min)
+    // 0分の科目を除外してからソート
+    const filteredData = data.filter(item => item.total_min > 0)
+    const sortedData = [...filteredData].sort((a, b) => b.total_min - a.total_min)
     
     return {
       labels: sortedData.map(item => item.name),

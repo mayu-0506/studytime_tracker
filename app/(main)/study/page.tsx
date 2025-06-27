@@ -3,40 +3,47 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { useStudyTimer } from '@/hooks/useStudyTimer'
+import { useTimer } from '@/contexts/TimerContext'
 import Timer from './Timer'
 import SubjectSelect from './SubjectSelect'
 import ManualEntryModal from './ManualEntryModal'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Calendar, Clock, BookOpen, Target } from 'lucide-react'
-import { StudySessionType, SubjectType } from '@/types'
-import { getTodaySessions, getSubjectSummary } from '@/actions/study-sessions'
+import { Subject } from '@/lib/supabase/subjects'
+import { getTodaySessionsWithSubjects, getSubjectSummaryForPeriod, SessionWithSubject, SubjectSummary } from '@/lib/supabase/study-sessions'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
+import { debugSupabase } from '@/utils/supabase/debug'
+import { debugTimerSession } from '@/utils/supabase/timer-debug'
+import { diagnoseWithGemini } from '@/utils/supabase/gemini-diagnosis'
 
 export default function StudyPage() {
   const router = useRouter()
-  const [selectedSubject, setSelectedSubject] = useState<SubjectType | null>(null)
+  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null)
   const [isManualEntryOpen, setIsManualEntryOpen] = useState(false)
-  const [todaySessions, setTodaySessions] = useState<StudySessionType[]>([])
+  const [todaySessions, setTodaySessions] = useState<SessionWithSubject[]>([])
   const [todayTotal, setTodayTotal] = useState(0)
-  const [subjectSummary, setSubjectSummary] = useState<{ subject_id: string; total_duration: number; subject?: SubjectType }[]>([])
+  const [subjectSummary, setSubjectSummary] = useState<SubjectSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   const {
     state,
     currentSession,
     formattedTime,
+    memo,
+    setMemo,
     start,
     pause,
     stop,
     canStart,
     canPause,
     canStop
-  } = useStudyTimer()
+  } = useTimer()
 
   useEffect(() => {
+    // デバッグ情報を出力
+    debugSupabase()
     checkAuthAndLoadData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -56,25 +63,25 @@ export default function StudyPage() {
   const loadTodayData = async () => {
     setLoading(true)
     try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       const tomorrow = new Date(today)
       tomorrow.setDate(tomorrow.getDate() + 1)
       
       const [sessions, summary] = await Promise.all([
-        getTodaySessions(),
-        getSubjectSummary(today, tomorrow)
+        getTodaySessionsWithSubjects(user.id),
+        getSubjectSummaryForPeriod(user.id, today, tomorrow)
       ])
 
-      if (sessions) {
-        setTodaySessions(sessions)
-        const total = sessions.reduce((acc, session) => acc + (session.duration || 0), 0)
-        setTodayTotal(total)
-      }
+      setTodaySessions(sessions)
+      const total = sessions.reduce((acc, session) => acc + (session.duration_min || session.duration || 0), 0)
+      setTodayTotal(total)
 
-      if (summary) {
-        setSubjectSummary(summary)
-      }
+      setSubjectSummary(summary)
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -88,10 +95,10 @@ export default function StudyPage() {
     loadTodayData()
   }
 
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    return `${hours}時間${minutes}分`
+  const formatDuration = (minutes: number) => {
+    const hours = Math.floor(minutes / 60)
+    const mins = minutes % 60
+    return `${hours}時間${mins}分`
   }
 
   // Remove unused variable
@@ -100,10 +107,41 @@ export default function StudyPage() {
     <div className="container mx-auto p-6 max-w-7xl">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">勉強タイマー</h1>
-        <Button onClick={() => setIsManualEntryOpen(true)} variant="outline">
-          <Calendar className="w-4 h-4 mr-2" />
-          手動で記録を追加
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setIsManualEntryOpen(true)} variant="outline">
+            <Calendar className="w-4 h-4 mr-2" />
+            手動で記録を追加
+          </Button>
+          {process.env.NODE_ENV === 'development' && (
+            <>
+              <Button 
+                onClick={() => debugSupabase()} 
+                variant="outline"
+                className="bg-yellow-50 border-yellow-500 text-yellow-700"
+              >
+                診断実行
+              </Button>
+              <Button 
+                onClick={() => debugTimerSession()} 
+                variant="outline"
+                className="bg-orange-50 border-orange-500 text-orange-700"
+              >
+                タイマー診断
+              </Button>
+              <Button 
+                onClick={async () => {
+                  const res = await fetch('/api/debug-timer')
+                  const data = await res.json()
+                  console.log('API診断結果:', data)
+                }} 
+                variant="outline"
+                className="bg-purple-50 border-purple-500 text-purple-700"
+              >
+                API診断
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -126,6 +164,8 @@ export default function StudyPage() {
                 state={state}
                 formattedTime={formattedTime}
                 currentSession={currentSession}
+                memo={memo}
+                onMemoChange={setMemo}
                 onStart={() => {
                   if (selectedSubject) {
                     start(selectedSubject)
@@ -183,18 +223,18 @@ export default function StudyPage() {
               ) : subjectSummary.length > 0 ? (
                 <div className="space-y-3">
                   {subjectSummary.map((item) => (
-                    <div key={item.subject_id} className="flex items-center justify-between">
+                    <div key={item.subjectId} className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div 
                           className="w-3 h-3 rounded-full" 
-                          style={{ backgroundColor: item.subject?.color || '#gray' }}
+                          style={{ backgroundColor: item.subject.color }}
                         />
                         <span className="text-sm font-medium">
-                          {item.subject?.name || '不明な科目'}
+                          {item.subject.name}
                         </span>
                       </div>
                       <span className="text-sm text-muted-foreground">
-                        {formatDuration(item.total_duration)}
+                        {formatDuration(item.totalMinutes)}
                       </span>
                     </div>
                   ))}
@@ -219,9 +259,9 @@ export default function StudyPage() {
                   {todaySessions.slice(0, 5).map((session) => (
                     <div key={session.id} className="text-sm space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-medium">{session.subject?.name}</span>
+                        <span className="font-medium">{session.subject?.name || '未設定'}</span>
                         <span className="text-muted-foreground">
-                          {formatDuration(session.duration || 0)}
+                          {formatDuration(session.duration_min || session.duration || 0)}
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">

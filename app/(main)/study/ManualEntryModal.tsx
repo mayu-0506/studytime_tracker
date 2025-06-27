@@ -1,9 +1,9 @@
 "use client"
 
 import { useState, useTransition, useEffect } from "react"
-import { SubjectType } from "@/types"
 import { createManualSession } from "@/actions/study-sessions"
-import { getSubjects } from "@/actions/subjects"
+import { getAllSubjects } from "@/lib/supabase/subjects"
+import { createClient } from "@/utils/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -26,6 +26,7 @@ import {
 import { Loader2 } from "lucide-react"
 import toast from "react-hot-toast"
 import { format } from "date-fns"
+import { calculateStudyMinutes, formatMinutesToHoursMinutes } from "@/utils/time-format"
 
 interface ManualEntryModalProps {
   isOpen: boolean
@@ -33,8 +34,15 @@ interface ManualEntryModalProps {
   onSuccess?: () => void
 }
 
+interface Subject {
+  id: string
+  name: string
+  color: string
+  isPreset: boolean
+}
+
 export default function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualEntryModalProps) {
-  const [subjects, setSubjects] = useState<SubjectType[]>([])
+  const [subjects, setSubjects] = useState<Subject[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedSubjectId, setSelectedSubjectId] = useState("")
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"))
@@ -53,12 +61,13 @@ export default function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualE
   const loadSubjects = async () => {
     setLoading(true)
     try {
-      const result = await getSubjects()
-      if (result.success && result.data) {
-        setSubjects(result.data)
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const allSubjects = await getAllSubjects(user.id)
+        setSubjects(allSubjects)
       } else {
-        console.error('Subjects fetch error:', result.error)
-        // エラーは表示せず、科目が空のまま処理を続ける
+        console.error('User not authenticated')
       }
     } catch (error) {
       console.error('Subjects fetch exception:', error)
@@ -104,8 +113,8 @@ export default function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualE
       })
       
       if (result.success) {
-        const duration = Math.round((endDateTime.getTime() - startDateTime.getTime()) / (1000 * 60))
-        toast.success(`学習記録を追加しました（${duration}分）`)
+        const duration = calculateStudyMinutes(startDateTime, endDateTime)
+        toast.success(`学習記録を追加しました（${formatMinutesToHoursMinutes(duration)}）`)
         
         // フォームをリセット
         setSelectedSubjectId("")
@@ -156,17 +165,42 @@ export default function ManualEntryModal({ isOpen, onClose, onSuccess }: ManualE
                     科目がありません
                   </div>
                 ) : (
-                  subjects.map((subject) => (
-                    <SelectItem key={subject.id} value={subject.id}>
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: subject.color || '#gray' }}
-                        />
-                        {subject.name}
-                      </div>
-                    </SelectItem>
-                  ))
+                  <>
+                    {/* プリセット科目 */}
+                    {subjects.filter(s => s.isPreset).length > 0 && (
+                      <>
+                        <div className="px-2 py-1.5 text-xs font-semibold text-gray-500">プリセット科目</div>
+                        {subjects.filter(s => s.isPreset).map((subject) => (
+                          <SelectItem key={subject.id} value={subject.id}>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: subject.color }}
+                              />
+                              {subject.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </>
+                    )}
+                    {/* カスタム科目 */}
+                    {subjects.filter(s => !s.isPreset).length > 0 && (
+                      <>
+                        <div className="px-2 py-1.5 text-xs font-semibold text-gray-500">カスタム科目</div>
+                        {subjects.filter(s => !s.isPreset).map((subject) => (
+                          <SelectItem key={subject.id} value={subject.id}>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: subject.color }}
+                              />
+                              {subject.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </>
+                    )}
+                  </>
                 )}
               </SelectContent>
             </Select>

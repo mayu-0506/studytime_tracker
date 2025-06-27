@@ -4,6 +4,8 @@ import Link from "next/link"
 import { useUser } from "@/contexts/AuthContext"
 import { Settings, Timer, BarChart3 } from "lucide-react"
 import ProfileAvatar from "@/components/ProfileAvatar"
+import PersistentTimerDisplay from "@/components/PersistentTimerDisplay"
+import HeaderTimerIndicator from "@/components/HeaderTimerIndicator"
 
 interface LayoutProps {
   children: React.ReactNode
@@ -25,6 +27,7 @@ export default function Layout({ children }: LayoutProps) {
               <div className="h-8 w-24 bg-gray-200 animate-pulse rounded"></div>
             ) : user ? (
               <>
+                <HeaderTimerIndicator />
                 <Link
                   href="/dashboard"
                   className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:text-gray-900 transition"
@@ -69,6 +72,9 @@ export default function Layout({ children }: LayoutProps) {
       </header>
       
       {children}
+      
+      {/* Persistent timer display for authenticated users */}
+      {user && <PersistentTimerDisplay />}
     </>
   )
 }

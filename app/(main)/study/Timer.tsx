@@ -3,6 +3,8 @@
 import { Play, Pause, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 
 interface TimerProps {
   state: "idle" | "running" | "paused"
@@ -10,9 +12,11 @@ interface TimerProps {
   currentSession?: {
     subject?: {
       name: string
-      color?: string | null
+      color: string
     }
   } | null
+  memo: string
+  onMemoChange: (memo: string) => void
   onStart: () => void
   onPause: () => void
   onStop: () => void
@@ -25,6 +29,8 @@ export default function Timer({
   state,
   formattedTime,
   currentSession,
+  memo,
+  onMemoChange,
   onStart,
   onPause,
   onStop,
@@ -41,10 +47,8 @@ export default function Timer({
             <span 
               className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium"
               style={{
-                backgroundColor: currentSession.subject.color ? 
-                  `${currentSession.subject.color}20` : 
-                  '#3B82F620',
-                color: currentSession.subject.color || '#3B82F6'
+                backgroundColor: `${currentSession.subject.color}20`,
+                color: currentSession.subject.color
               }}
             >
               {currentSession.subject.name}
@@ -74,6 +78,22 @@ export default function Timer({
             <p className="text-yellow-600 font-medium">一時停止中</p>
           )}
         </div>
+        
+        {/* メモ入力欄（タイマー実行中のみ表示） */}
+        {state !== "idle" && (
+          <div className="mb-6 text-left max-w-md mx-auto">
+            <Label htmlFor="memo" className="text-sm font-medium text-gray-700 mb-2 block">
+              学習メモ（学習内容・感想など）
+            </Label>
+            <Textarea
+              id="memo"
+              value={memo}
+              onChange={(e) => onMemoChange(e.target.value)}
+              placeholder="今日学習した内容や感想を記録しましょう..."
+              className="min-h-[100px]"
+            />
+          </div>
+        )}
         
         {/* コントロールボタン */}
         <div className="flex justify-center gap-3">

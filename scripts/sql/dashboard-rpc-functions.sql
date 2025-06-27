@@ -51,7 +51,7 @@ BEGIN
     COALESCE(SUM(ss.duration), 0)::integer as total_min
   FROM subjects s
   LEFT JOIN study_sessions ss ON s.id = ss.subject_id AND ss.user_id = auth.uid()
-  WHERE s.user_id = auth.uid() OR s.user_id IS NULL
+  WHERE s.user_id = auth.uid()
   GROUP BY s.id, s.name, s.color
   HAVING COALESCE(SUM(ss.duration), 0) > 0
   ORDER BY total_min DESC;

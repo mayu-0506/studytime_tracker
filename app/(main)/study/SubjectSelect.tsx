@@ -1,9 +1,9 @@
 "use client"
 
 import { useState, useTransition, useEffect } from "react"
-import { createSubject } from "@/actions/subjects"
+import { getAllSubjects as getAllSubjectsAction, createCustomSubject, deleteCustomSubject as deleteCustomSubjectAction } from "@/actions/subjects"
 import { createClient } from "@/utils/supabase/client"
-import { SubjectType } from "@/types"
+import { Subject } from "@/lib/supabase/subjects"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -30,8 +30,8 @@ import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 
 interface SubjectSelectProps {
-  selected: SubjectType | null
-  onChange: (subject: SubjectType) => void
+  selected: Subject | null
+  onChange: (subject: Subject) => void
   disabled?: boolean
 }
 
@@ -40,7 +40,7 @@ function SubjectSelect({
   onChange,
   disabled = false
 }: SubjectSelectProps) {
-  const [subjects, setSubjects] = useState<SubjectType[]>([])
+  const [subjects, setSubjects] = useState<Subject[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
@@ -48,6 +48,7 @@ function SubjectSelect({
   const [selectedColor, setSelectedColor] = useState("#3B82F6")
   const [isPending, startTransition] = useTransition()
   const [isDeleting, setIsDeleting] = useState(false)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   
   const supabase = createClient()
   
@@ -66,25 +67,40 @@ function SubjectSelect({
   // 科目をフェッチ（簡素化）
   useEffect(() => {
     loadSubjects()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   
   const loadSubjects = async () => {
     setLoading(true)
     setError(null)
     try {
-      const { data: subjects, error } = await supabase
-        .from('subjects')
-        .select('*')
-        .order('name')
+      // 現在のユーザーIDを取得
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setError("ログインしてください")
+        return
+      }
+      setCurrentUserId(user.id)
       
-      if (error) {
-        setError("科目の取得に失敗しました")
-        console.error('Subjects fetch error:', error)
-      } else {
-        setSubjects(subjects || [])
-        if (!subjects || subjects.length === 0) {
-          setError("科目がありません。まず科目を追加してください。")
+      // すべての科目を取得（プリセット + カスタム）
+      const result = await getAllSubjectsAction()
+      
+      if (result.success && result.data) {
+        // SubjectItemからSubjectに変換
+        const subjects: Subject[] = result.data.map(item => ({
+          id: item.id,
+          name: item.name,
+          color: item.color,
+          isPreset: item.isPreset,
+          presetKey: item.presetKey
+        }))
+        setSubjects(subjects)
+        
+        if (subjects.length === 0) {
+          setError("科目がありません。")
         }
+      } else {
+        setError(result.error || "科目の取得に失敗しました")
       }
     } catch (error) {
       console.error('Subjects fetch exception:', error)
@@ -94,9 +110,9 @@ function SubjectSelect({
     }
   }
   
-  // プリセット科目とカスタム科目を分離（user_idがnullかどうかで判定）
-  const presetSubjects = subjects.filter(s => !s.user_id || s.user_id === 'null')
-  const customSubjects = subjects.filter(s => s.user_id && s.user_id !== 'null')
+  // プリセット科目とカスタム科目を分離
+  const presetSubjects = subjects.filter(s => s.isPreset)
+  const customSubjects = subjects.filter(s => !s.isPreset)
   
   const handleAddSubject = async () => {
     if (!newSubjectName.trim()) {
@@ -105,9 +121,13 @@ function SubjectSelect({
     }
     
     startTransition(async () => {
-      const result = await createSubject(
+      if (!currentUserId) {
+        toast.error("ログインしてください")
+        return
+      }
+      
+      const result = await createCustomSubject(
         newSubjectName.trim(),
-        selectedColor,
         selectedColor
       )
       
@@ -124,7 +144,18 @@ function SubjectSelect({
     })
   }
   
-  const handleDeleteSubject = async (subject: SubjectType) => {
+  const handleDeleteSubject = async (subject: Subject) => {
+    // プリセット科目は削除不可
+    if (subject.isPreset) {
+      toast.error("プリセット科目は削除できません")
+      return
+    }
+    
+    if (!currentUserId) {
+      toast.error("ログインしてください")
+      return
+    }
+    
     // window.confirmで簡易確認
     if (!window.confirm(`「${subject.name}」を削除しますか？\n\nこの操作は取り消せません。`)) {
       return
@@ -132,14 +163,9 @@ function SubjectSelect({
     
     setIsDeleting(true)
     try {
-      const { error } = await supabase
-        .from('subjects')
-        .delete()
-        .eq('id', subject.id)
+      const result = await deleteCustomSubjectAction(subject.id)
       
-      if (error) {
-        toast.error(error.message || "削除に失敗しました")
-      } else {
+      if (result.success) {
         toast.success("科目を削除しました")
         // 削除した科目が選択されていた場合は選択を解除
         if (selected?.id === subject.id) {
@@ -149,6 +175,8 @@ function SubjectSelect({
           }
         }
         await loadSubjects()
+      } else {
+        toast.error(result.error || "削除に失敗しました")
       }
     } catch (error) {
       console.error('Delete error:', error)
